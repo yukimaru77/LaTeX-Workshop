@@ -1,111 +1,555 @@
+// https://texstudio-org.github.io/background.html#description-of-the-cwl-format
 import * as fs from 'fs'
-import * as path from 'path'
+import type { DependencyRaw, EnvironmentRaw, MacroRaw, PackageRaw } from '../src/types'
 
+let _defaultMacros: string[] = []
 /**
- * ======== 基本データ構造定義 (簡易版) ========
- * 元のLaTeX Workshopの型を簡略化しています。
+ * Checks if a given macro is a default macro.
+ * @param macro - The macro to check.
+ * @param defaults - Optional. The list of default macros. If not provided, it
+ * will be loaded from '../data/macros.json'.
+ * @returns A boolean indicating whether the macro is a default macro.
  */
-type DependencyRaw = { name: string; if?: string }
-type EnvironmentRaw = { name: string; arg?: any; if?: string }
-type MacroRaw = { name: string; arg?: any; detail?: string; doc?: string; if?: string }
-type PackageRaw = {
-  deps: DependencyRaw[]
-  macros: MacroRaw[]
-  envs: EnvironmentRaw[]
-  keys: Record<string, string[]>
-  args: string[]
+function isDefaultMacro(macro: string, defaults?: string[]): boolean {
+    if (defaults === undefined && _defaultMacros.length === 0) {
+        _defaultMacros = (JSON.parse(fs.readFileSync('../data/macros.json').toString()) as MacroRaw[]).map(
+            (m) => m.name + (m.arg?.format ?? '')
+        )
+    }
+    defaults = defaults ?? _defaultMacros
+    return defaults.includes(macro)
+}
+
+let _unimathSymbols: { [key: string]: { command: string, detail: string, documentation: string } } = {}
+/**
+ * Retrieves the symbol information for a given macro from the unimathSymbols
+ * data. If the unimathSymbols data is not provided, it will be loaded from
+ * '../data/unimathsymbols.json'.
+ * @param macro - The macro for which to retrieve the symbol information.
+ * @param defaults - Optional. The default unimathSymbols data to use if not
+ * provided.
+ * @returns The symbol information for the given macro.
+ */
+function getUnimathSymbol(macro: string, defaults?: typeof _unimathSymbols) {
+    if (defaults === undefined && Object.keys(_unimathSymbols).length === 0) {
+        _unimathSymbols = JSON.parse(fs.readFileSync('../data/unimathsymbols.json').toString()) as {
+            [key: string]: { command: string, detail: string, documentation: string }
+        }
+    }
+    defaults = defaults ?? _unimathSymbols
+    return defaults[macro]
 }
 
 /**
- * ======== コア関数群 ========
+ * Checks if a line should be skipped.
+ *
+ * @param line - The line to check.
+ * @returns `true` if the line should be skipped, `false` otherwise.
  */
-function parsePkg(cwlPath: string): PackageRaw {
-  if (!fs.existsSync(cwlPath)) throw new Error(`Input file not found: ${cwlPath}`)
-  const content = fs.readFileSync(cwlPath, 'utf-8')
-  const pkg: PackageRaw = { deps: [], macros: [], envs: [], keys: {}, args: [] }
-
-  // 行単位で簡単に処理（CWL構文をシンプルに反映）
-  for (const rawLine of content.split('\n')) {
-    const line = rawLine.trim()
-    if (line === '' || line.startsWith('#')) continue
-    if (line.startsWith('\\')) {
-      const name = line.slice(1).split(/[{\[#]/)[0]
-      pkg.macros.push({ name })
-    } else if (line.startsWith('\\begin{')) {
-      const env = line.match(/\\begin{([^}]+)}/)
-      if (env) pkg.envs.push({ name: env[1] })
-    } else if (line.startsWith('#include')) {
-      const dep = line.split(' ')[1]
-      if (dep) pkg.deps.push({ name: dep })
+function isSkipLine(line: string): boolean {
+    if (line === '') {
+        return true
     }
-  }
-
-  return pkg
-}
-
-function parseFiles(files: string[], outDir: string) {
-  fs.mkdirSync(outDir, { recursive: true })
-  for (const f of files) {
-    console.log(`Parsing: ${f}`)
-    const pkg = parsePkg(f)
-    const outName = path.basename(f).replace(/\.cwl$/, '.json')
-    const outPath = path.join(outDir, outName)
-    fs.writeFileSync(outPath, JSON.stringify(pkg, null, 2))
-    console.log(`→ ${outPath}`)
-  }
+    if (
+        line.startsWith('#') &&
+        !line.startsWith('#include') &&
+        // !line.startsWith('#repl') &&
+        !line.startsWith('#keyvals') &&
+        !line.startsWith('#ifOption')
+    ) {
+        return true
+    }
+    return false
 }
 
 /**
- * ======== CLI引数処理 ========
+ * Parses an array of lines and performs specific actions based on the content of each line.
+ *
+ * @param pkg - The package object objbe modifiedo be modified.
+ * @param lines - The array of lines to be be padrsed.
+ * @param ifCond - An optional condition to be be evaludated.
  */
-const args = process.argv.slice(2)
-if (args.includes('--in')) {
-  const inIdx = args.indexOf('--in')
-  const outIdx = args.indexOf('--out')
-  const outdirIdx = args.indexOf('--outdir')
-
-  // 入力CWL一覧
-  const inputs: string[] = []
-  for (let i = inIdx + 1; i < args.length; i++) {
-    const a = args[i]
-    if (['--out', '--outdir'].includes(a)) break
-    inputs.push(a)
-  }
-  if (inputs.length === 0) {
-    console.error('❌ Error: No input after --in')
-    process.exit(1)
-  }
-
-  // 単一ファイル出力
-  if (inputs.length === 1 && outIdx !== -1) {
-    const outPath = args[outIdx + 1]
-    if (!outPath) {
-      console.error('❌ Error: --out <output.json> is missing')
-      process.exit(1)
+function parseLines(pkg: PackageRaw, lines: string[], ifCond?: string): void {
+    for (let index = 0; index < lines.length; index++) {
+        const line = lines[index].trim()
+        if (isSkipLine(line)) {
+            continue
+        }
+        if (line.startsWith('#include')) {
+            parseInclude(pkg, line, ifCond)
+        } else if (line.startsWith('#keyvals')) {
+            let endIndex = lines.slice(index).findIndex((l) => l.startsWith('#endkeyvals')) + index
+            if (endIndex < index) {
+                endIndex = Number.MAX_SAFE_INTEGER
+            }
+            const tag = line.slice(9).trim()
+            parseKeys(pkg, lines.slice(index + 1, endIndex), tag)
+            assignKeys(pkg, tag)
+            index = endIndex
+        } else if (line.startsWith('#ifOption')) {
+            let endIndex = lines.slice(index).findIndex((l) => l.startsWith('#endif')) + index
+            if (endIndex < index) {
+                endIndex = Number.MAX_SAFE_INTEGER
+            }
+            parseLines(pkg, lines.slice(index + 1, endIndex), line.slice(10).trim())
+            index = endIndex
+        } else if (line.startsWith('\\begin{')) {
+            parseEnv(pkg, line, ifCond)
+        } else if (line.startsWith('\\end{')) {
+            continue
+        } else if (line.startsWith('\\')) {
+            parseMacro(pkg, line, ifCond)
+        } else {
+            console.warn('Unknown line: ' + line)
+        }
     }
-    const pkg = parsePkg(inputs[0])
-    fs.mkdirSync(path.dirname(outPath), { recursive: true })
-    fs.writeFileSync(outPath, JSON.stringify(pkg, null, 2))
-    console.log(`✅ Wrote ${outPath}`)
-    process.exit(0)
-  }
+}
 
-  // 複数ファイル出力
-  if (inputs.length > 0 && outdirIdx !== -1) {
-    const outDir = args[outdirIdx + 1]
-    if (!outDir) {
-      console.error('❌ Error: --outdir <dir> is missing')
-      process.exit(1)
+/**
+ * Parses an include statement and adds the dependency to the package.
+ *
+ * @param pkg - The package to add the dependency to.
+ * @param line - The include statement.
+ * @param ifCond - Optional condition for the dependency.
+ */
+function parseInclude(pkg: PackageRaw, line: string, ifCond?: string): void {
+    const dep: DependencyRaw = { name: line.slice(9).trim() }
+    if (ifCond) {
+        dep.if = ifCond
     }
-    parseFiles(inputs, outDir)
-    process.exit(0)
-  }
+    pkg.deps.push(dep)
+}
 
-  console.error('❌ Error: specify --out <file.json> or --outdir <dir>')
-  process.exit(1)
-} else {
-  console.log('Usage:')
-  console.log('  ts-node parse-cwl.ts --in file.cwl --out file.json')
-  console.log('  ts-node parse-cwl.ts --in a.cwl b.cwl --outdir /path/to/outdir')
-  process.exit(0)
+/**
+ * Parses the key-val keys from the given lines.
+ *
+ * @param pkg - The package object to add the keys to.
+ * @param lines - The lines to parse the keys from.
+ * @param tag - The tag to add the keys to in the package.
+ */
+function parseKeys(pkg: PackageRaw, lines: string[], tag: string): void {
+    const keys: string[] = []
+    for (const line of lines) {
+        if (isSkipLine(line)) {
+            continue
+        }
+        let snippet = line.trim()
+        // cachedir=%<directory%> => cachedir=${1:directory}
+        let index = 1
+        while (true) {
+            const match = /%<([^%]*?)%>/.exec(snippet)
+            if (match === null) {
+                break
+            }
+            snippet = snippet.replace(/%<([^%]*?)%>/, `$$\{${index}:${match[1]}}`)
+            index++
+        }
+        const match = /^([^#]*?)(=)?#([^%#]+)$/.exec(snippet)
+        if (match) {
+            // cache=#true,false => cache=${1|true,false|}
+            snippet = match[1] + (match[2] === '=' ? `=$\{${index}|${match[3]}|}` : '')
+        } else {
+            // numbersep=##L => numbersep=
+            snippet = snippet.split('#')[0]
+        }
+        keys.push(snippet)
+    }
+    pkg.keys[tag] = [...(pkg.keys[tag] ?? []), ...keys]
+}
+
+/**
+ * Assigns keys to the specified package, macros, and environments with the
+ * given tag.
+ *
+ * @param pkg - The package to assign keys to.
+ * @param tag - The tag used to assign keys.
+ */
+function assignKeys(pkg: PackageRaw, tag: string) {
+    for (let context of tag.split(',')) {
+        if (context.startsWith('\\documentclass') || context.startsWith('\\usepackage')) {
+            if (!pkg.args.includes(tag)) {
+                pkg.args.push(tag)
+            }
+            continue
+        }
+        // \includepdf,includepdfmerge,\includepdfset => \includepdf,\includepdfmerge,\includepdfset
+        if (!context.startsWith('\\')) {
+            context = '\\' + context
+        }
+        context = context.split('#')[0]
+        const isEnv = context.startsWith('\\begin')
+        const name = context.startsWith('\\begin') ? context.slice(7, -1) : context.slice(1)
+        for (const candidate of isEnv ? pkg.envs : pkg.macros) {
+            if (candidate.name === name && candidate.arg) {
+                const keyPos = findKeyPos(candidate.arg.snippet)
+                if (keyPos > -1) {
+                    candidate.arg.keys = candidate.arg.keys ?? []
+                    if (!candidate.arg.keys.includes(tag)) {
+                        candidate.arg.keys.push(tag)
+                    }
+                    candidate.arg.keyPos = keyPos
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Finds the position of a key in a given snippet.
+ *
+ * @param snippet - The snippet to search for the key position.
+ * @returns The position of the key in the snippet, or -1 if not found.
+ */
+function findKeyPos(snippet: string): number {
+    const matches = snippet.matchAll(/\{\$\{([^{}]*)\}\}|\[\$([^[\]]*)\]|<\$([^<>]*)>|\|\$([^<>]*)\|/g)
+    let index = 0
+    for (const match of matches) {
+        const context = (match[1] ?? match[2] ?? match[3] ?? match[4]).replace(/[{}0-9:]+/g, '')
+        if (
+            context.startsWith('keys') ||
+            context.startsWith('keyvals') ||
+            context.startsWith('options') ||
+            context.endsWith('%keyvals')
+        ) {
+            return index
+        }
+        index++
+    }
+    return -1
+}
+
+/**
+ * Parses an environment line and constructs an EnvironmentRaw object.
+ *
+ * @param pkg - The PackageRaw object to add the environment to.
+ * @param line - The environment line to parse.
+ * @param ifCond - Optional condition for the environment.
+ * @returns void
+ *
+ * @remarks
+ * This function takes a line of code representing an environment and parses it
+ * to construct an EnvironmentRaw object. The line should be in the format
+ * `\begin{environmentName}[options%keyvals]{language}#M`. If the line does not
+ * match this format, an error will be logged and the function will return. If
+ * the line includes the option `S`, the function will return without adding the
+ * environment to the package. Otherwise, the function will construct an
+ * EnvironmentRaw object using the `constructMacroEnv` function and add it to
+ * the `envs` array of the provided `pkg` object.
+ */
+function parseEnv(pkg: PackageRaw, line: string, ifCond?: string): void {
+    // \begin{minted}[options%keyvals]#S
+    // \begin{minted}{language}#MV
+    // \begin{minted}[options%keyvals]{language}#M
+    const match = /\\begin{(.*?)}([^#]*)(?:#(.*))?$/.exec(line)
+    if (match === null) {
+        console.error('Unknown env line: ' + line)
+        return
+    }
+    if (match.length === 4 && match[3] && match[3].includes('S')) {
+        return
+    }
+    const env: EnvironmentRaw | undefined = constructMacroEnv({ name: match[1] }, match, false, ifCond)
+    if (env) {
+        pkg.envs.push(env)
+    }
+}
+
+/**
+ * Parses a macro in a LaTeX document.
+ *
+ * @param pkg - The package object to store the parsed macro.
+ * @param line - The line of code containing the macro.
+ * @param ifCond - Optional condition for the macro.
+ * @returns void
+ *
+ * @remarks
+ * This function is responsible for parsing a macro in a LaTeX document. It
+ * takes the package object, the line of code containing the macro, and an
+ * optional condition for the macro. The parsed macro is then stored in the
+ * package object.
+ *
+ * The function handles special cases in the LaTeX document, such as macros
+ * starting with "\\left" and containing "\\right", or macros starting with
+ * "\\bigg". It also handles macros of the form
+ * "\\mint[keys]{language}{verbatimSymbol}#S" and
+ * "\\mintinline[keys]{language}{verbatimSymbol}#S".
+ *
+ * If the parsed macro is not a default macro, it checks if there is a
+ * corresponding Unicode math symbol for the macro. If a Unicode math symbol is
+ * found, the macro's detail and documentation are updated accordingly.
+ */
+function parseMacro(pkg: PackageRaw, line: string, ifCond?: string): void {
+    // Special cases in latex-document
+    if (/(?:\\left|\\right)[^a-zA-Z]/.test(line)) {
+        return
+    }
+    // Special cases in latex-document and tex, e.g., \Bigg(%|\Bigg)#mM
+    if (line.toLowerCase().split('\\big').length === 3) {
+        return handleBigMacros(pkg, line)
+    }
+    // \mint[keys]{language}{verbatimSymbol}#S
+    // \mint{%<language%>}|%<code%>|#M
+    // \mint[%<options%>]{%<language%>}|%<code%>|#M
+    // \mintinline[keys]{language}{verbatimSymbol}#S
+    // \mintinline{%<language%>}|%<code%>|#M
+    const match = /\\([^[{\n]*?)((?:\{|\[|\(|\|)[^#\n]*)?(?:#(.*))?$/.exec(line)
+    if (match === null) {
+        console.error('Unknown macro line: ' + line)
+        return
+    }
+    if (match.length === 4 && match[3] && match[3].includes('S')) {
+        return
+    }
+    const macro: MacroRaw | undefined = constructMacroEnv({ name: match[1] }, match, true, ifCond)
+
+    if (macro && !isDefaultMacro(macro.name + (macro.arg?.format ?? ''))) {
+        const unimath = getUnimathSymbol(macro.name)
+        if (unimath?.detail) {
+            macro.detail = unimath.detail
+        }
+        if (unimath?.documentation) {
+            macro.doc = unimath.documentation
+        }
+        pkg.macros.push(macro)
+    }
+}
+
+function handleBigMacros(pkg: PackageRaw, line: string): void {
+    let snippet = line.slice(1, line.lastIndexOf('#')) // Remove leading backslash and type indicator
+    snippet = snippet
+        .replaceAll('%|', '${1}') // Replace %| with cursor position
+        .replaceAll('%<..%>', '${1}') // Remove %<..%> with cursor position
+        .replaceAll('\\}', '\\\\}') // Right curly brace needs double escape
+    const macro: MacroRaw = {
+        name: line.slice(1, line.indexOf('%')),
+        arg: {
+            format: '',
+            snippet,
+        },
+    }
+    pkg.macros.push(macro)
+    return
+}
+
+/**
+ * Constructs a macro environment based on the provided context, match, and
+ * ifCond parameters.
+ *
+ * @param context - The context object representing a MacroRaw or
+ * EnvironmentRaw.
+ * @param match - The RegExpExecArray containing the matched values.
+ * @param ifCond - Optional. The if condition for the context.
+ * @returns The constructed macro environment or undefined if the name or
+ * argument format contains invalid characters.
+ */
+function constructMacroEnv(
+    context: MacroRaw | EnvironmentRaw,
+    match: RegExpExecArray,
+    isMacro: boolean,
+    ifCond?: string
+): typeof context | undefined {
+    if (ifCond) {
+        context.if = ifCond
+    }
+    if (match.length === 4 && match[3] && match[3].includes('*')) {
+        context.unusual = true
+    }
+    if (match[2]) {
+        const arg = match[2]
+            .replace(/\{[^{}]*\}/g, '{}')
+            .replace(/\[[^[\]]*\]/g, '[]')
+            .replace(/(?<![{\s:[])(<)([a-zA-Z\s]*)(>)/g, '<>')
+            .replace(/\|[^|]*\|/g, '||')
+            .replace(/\([^()]*\)/g, '()')
+        if (arg !== '') {
+            context.arg = { format: arg, snippet: (isMacro ? match[1] : '') + createSnippet(match[2]) }
+        }
+    }
+    if (/[^A-Za-z0-9{}[\]<>|()*_^:,\s]/.test(context.name + context.arg?.format)) {
+        return
+    }
+    return context
+}
+
+/**
+ * Creates a snippet based on the given argument.
+ *
+ * @param arg - The argument to create the snippet from.
+ * @returns The generated snippet.
+ */
+function createSnippet(arg: string): string {
+    let index = 1
+    // {} [] <> ||
+    for (const regexp of [
+        /(\{)(?![$0-9])([^{}]*)(\})/,
+        /(\[)(?!\$)([^[\]]*)(\])/,
+        /(?<![{\s:[])(<)(?!\$)([a-zA-Z\s]*)(>)/,
+        /(\|)(?!\$)([^|]*)(\|)/,
+    ]) {
+        while (true) {
+            const newArg = findArg(arg, regexp, index)
+            if (newArg === false) {
+                break
+            }
+            arg = newArg
+            index++
+        }
+    }
+    // (x1,x2,x3) => (${1:x1},${2:x2},${3:x3})
+    while (true) {
+        const match = arg.match(/\(([^()$]+)\)/)
+        if (match === null || match[1] === '') {
+            break
+        }
+        arg = arg.replace(
+            /\(([^()$]+)\)/,
+            '(' +
+                match[1]
+                    .split(',')
+                    .map((val) => `$$\{${index++}:${val}}`)
+                    .join(',') +
+                ')'
+        )
+    }
+    // [${1:plain}]%| => [${1:plain}]${2}
+    while (true) {
+        const tabPos = arg.indexOf('%|')
+        if (tabPos === -1) {
+            break
+        }
+        arg = arg.replace('%|', `$$\{${index++}}`)
+    }
+    return arg
+}
+
+/**
+ * Finds and replaces a specific argument in a string using a regular
+ * expression.
+ *
+ * @param arg - The string containing the argument to be replaced.
+ * @param regexp - The regular expression used to match the argument.
+ * @param index - The index used in the replacement string.
+ * @returns The modified string with the argument replaced, or `false` if the
+ * argument was not found.
+ *
+ * @remarks
+ * This function searches for a specific argument in the given string using the
+ * provided regular expression. If the argument is found, it replaces it with a
+ * modified version based on the provided index. The modified string is then
+ * returned. If the argument is not found, the function returns `false`.
+ */
+function findArg(arg: string, regexp: RegExp, index: number): string | false {
+    const match = arg.match(regexp)
+    if (match === null || match[2] === undefined) {
+        return false
+    }
+    return arg.replace(
+        regexp,
+        `${match[1]}$$\{${index}:${match[2].replaceAll('%<', '').replaceAll('%>', '')}}${match[3]}`
+    )
+}
+
+/**
+ * Parses a package with the given package name.
+ *
+ * @param pkgName - The name of the package to parse.
+ * @returns The parsed package object.
+ */
+function parsePkg(pkgName: string): PackageRaw {
+    let content = fs.readFileSync(`cwl/${pkgName}.cwl`).toString()
+    content = handleKomaClasses(pkgName, content)
+    const pkg: PackageRaw = { deps: [], macros: [], envs: [], keys: {}, args: [] }
+    parseLines(pkg, content.split('\n'))
+    return pkg
+}
+
+function handleKomaClasses(pkgName: string, content: string): string {
+    if (!['class-scrartcl', 'class-scrbook', 'class-scrreprt', 'class-scrartcl,scrreprt,scrbook'].includes(pkgName)) {
+        return content
+    }
+    if (pkgName === 'class-scrartcl,scrreprt,scrbook') {
+        return ''
+    }
+    const baseContent = fs.readFileSync('cwl/class-scrartcl,scrreprt,scrbook.cwl').toString()
+    return baseContent + '\n' + content
+}
+
+/**
+ * Parses an array of file paths and converts CWL files to JSON format.
+ *
+ * @param files - An array of file paths to be parsed.
+ * @param folder - The folder where the JSON files will be saved.
+ */
+function parseFiles(files: string[], folder: string) {
+    for (const file of files) {
+        console.log(file)
+        if (!file.endsWith('.cwl') || file === 'expl3.cwl') {
+            continue
+        }
+        const pkgName = file.replace('.cwl', '')
+        const pkg = parsePkg(pkgName)
+        fs.writeFileSync(`${folder}/${pkgName}.json`, JSON.stringify(pkg, null, 2))
+    }
+}
+
+/**
+ * Parses the expl3.cwl file and generates a JSON representation of the package.
+ *
+ * @remarks
+ * This function reads the content of the 'expl3.cwl' file, parses it line by
+ * line, and generates a JSON object representing the package. The generated
+ * package object includes dependencies, macros, environments, keys, and
+ * arguments. Additionally, it adds a macro named 'ExplSyntaxOn' to the
+ * package's macros array.
+ *
+ * @returns void
+ */
+function parseExpl3() {
+    const content = fs.readFileSync('expl3.cwl').toString()
+    const pkg: PackageRaw = { deps: [], macros: [], envs: [], keys: {}, args: [] }
+    parseLines(pkg, content.split('\n'))
+    pkg.macros.push({
+        name: 'ExplSyntaxOn',
+        arg: { format: '', snippet: 'ExplSyntaxOn\n\t$0\n\\ExplSyntaxOff' },
+        doc: 'Insert an \\ExplSyntax block',
+    })
+    fs.writeFileSync('../data/packages/expl3.json', JSON.stringify(pkg, null, 2))
+}
+
+/**
+ * Parses the essential package files.
+ */
+function parseEssential() {
+    const files = fs.readFileSync('cwl.list').toString().split('\n')
+    parseFiles(files, '../data/packages')
+    parseExpl3()
+}
+
+/**
+ * Parses all package files.
+ */
+function parseAll() {
+    const files = fs.readdirSync('cwl')
+    parseFiles(files, 'packages')
+}
+
+switch (process.argv[2]) {
+    case 'both':
+        parseEssential()
+        parseAll()
+        break
+    case 'all':
+        parseAll()
+        break
+    case 'ess':
+    case 'essential':
+        parseEssential()
+        break
+    default:
+        if (process.argv[2].endsWith('.cwl')) {
+            parseFiles([process.argv[2]], 'packages')
+        } else {
+            console.warn('ts-node parse-cwl.ts both|all|ess|essential|*.cwl')
+        }
+        break
 }
