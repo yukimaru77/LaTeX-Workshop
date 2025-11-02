@@ -1,0 +1,223 @@
+{
+  "deps": [],
+  "macros": [
+    {
+      "name": "thesection"
+    },
+    {
+      "name": "thesubsection"
+    },
+    {
+      "name": "section"
+    },
+    {
+      "name": "subsection"
+    },
+    {
+      "name": "subsubsection"
+    },
+    {
+      "name": "paragraph"
+    },
+    {
+      "name": "subparagraph"
+    },
+    {
+      "name": "BlackBox"
+    },
+    {
+      "name": "revision",
+      "arg": {
+        "format": "{}",
+        "snippet": "revision{${1:arg}}"
+      }
+    },
+    {
+      "name": "figurecaption",
+      "arg": {
+        "format": "{}{}",
+        "snippet": "figurecaption{${1:arg1}}{${2:arg2}}"
+      }
+    },
+    {
+      "name": "figurecenter",
+      "arg": {
+        "format": "{}{}",
+        "snippet": "figurecenter{${1:arg1}}{${2:arg2}}"
+      }
+    },
+    {
+      "name": "abovestrut",
+      "arg": {
+        "format": "{}",
+        "snippet": "abovestrut{${1:arg}}"
+      }
+    },
+    {
+      "name": "belowstrut",
+      "arg": {
+        "format": "{}",
+        "snippet": "belowstrut{${1:arg}}"
+      }
+    },
+    {
+      "name": "acks",
+      "arg": {
+        "format": "{}",
+        "snippet": "acks{${1:statement}}"
+      }
+    },
+    {
+      "name": "ethics",
+      "arg": {
+        "format": "{}",
+        "snippet": "ethics{${1:statement}}"
+      }
+    },
+    {
+      "name": "coi",
+      "arg": {
+        "format": "{}",
+        "snippet": "coi{${1:statement}}"
+      }
+    },
+    {
+      "name": "data",
+      "arg": {
+        "format": "{}",
+        "snippet": "data{${1:statement}}"
+      }
+    },
+    {
+      "name": "researchnote",
+      "arg": {
+        "format": "{}",
+        "snippet": "researchnote{${1:statement}}"
+      }
+    },
+    {
+      "name": "orcid",
+      "arg": {
+        "format": "{}",
+        "snippet": "orcid{${1:arg}}"
+      }
+    },
+    {
+      "name": "firstpageno",
+      "arg": {
+        "format": "{}",
+        "snippet": "firstpageno{${1:arg}}"
+      }
+    },
+    {
+      "name": "melbaid",
+      "arg": {
+        "format": "{}",
+        "snippet": "melbaid{${1:arg}}"
+      }
+    },
+    {
+      "name": "doi",
+      "arg": {
+        "format": "{}",
+        "snippet": "doi{${1:arg}}"
+      }
+    },
+    {
+      "name": "volume",
+      "arg": {
+        "format": "{}",
+        "snippet": "volume{${1:arg}}"
+      }
+    },
+    {
+      "name": "melbaauthors",
+      "arg": {
+        "format": "{}",
+        "snippet": "melbaauthors{${1:arg}}"
+      }
+    },
+    {
+      "name": "melbayear",
+      "arg": {
+        "format": "{}",
+        "snippet": "melbayear{${1:arg}}"
+      }
+    },
+    {
+      "name": "datesubmitted",
+      "arg": {
+        "format": "{}",
+        "snippet": "datesubmitted{${1:arg}}"
+      }
+    },
+    {
+      "name": "datepublished",
+      "arg": {
+        "format": "{}",
+        "snippet": "datepublished{${1:arg}}"
+      }
+    },
+    {
+      "name": "melbaspecialissue",
+      "arg": {
+        "format": "{}",
+        "snippet": "melbaspecialissue{${1:arg}}"
+      }
+    },
+    {
+      "name": "melbaspecialissueeditors",
+      "arg": {
+        "format": "{}",
+        "snippet": "melbaspecialissueeditors{${1:arg}}"
+      }
+    },
+    {
+      "name": "ShortHeadings",
+      "arg": {
+        "format": "{}{}",
+        "snippet": "ShortHeadings{${1:arg1}}{${2:arg2}}"
+      }
+    }
+  ],
+  "envs": [
+    {
+      "name": "abstract"
+    },
+    {
+      "name": "keywords"
+    },
+    {
+      "name": "proof"
+    },
+    {
+      "name": "example"
+    },
+    {
+      "name": "theorem"
+    },
+    {
+      "name": "lemma"
+    },
+    {
+      "name": "proposition"
+    },
+    {
+      "name": "remark"
+    },
+    {
+      "name": "corollary"
+    },
+    {
+      "name": "definition"
+    },
+    {
+      "name": "conjecture"
+    },
+    {
+      "name": "axiom"
+    }
+  ],
+  "keys": {},
+  "args": []
+}
